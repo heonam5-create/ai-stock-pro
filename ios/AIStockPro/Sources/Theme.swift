@@ -63,10 +63,11 @@ struct KV: View {
     var color: Color = AppColors.text
     init(_ k: String, _ v: String, _ color: Color = AppColors.text) { self.k = k; self.v = v; self.color = color }
     var body: some View {
-        HStack(alignment: .top) {
-            Text(k).font(.system(size: 14)).foregroundColor(AppColors.sub).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(0.42)
-            Text(v).font(.system(size: 14)).foregroundColor(color).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(0.58)
-                .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .top, spacing: 8) {
+            Text(k).font(.system(size: 14)).foregroundColor(AppColors.sub)
+                .frame(width: 124, alignment: .leading)
+            Text(v).font(.system(size: 14)).foregroundColor(color)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }.padding(.vertical, 2)
     }
 }

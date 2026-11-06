@@ -147,7 +147,7 @@ struct QuoteBlock: View {
             }
             ChipRow {
                 Pill(q.freshness.label, freshColor(q))
-                Pill(q.session.label, q.marketOpen ? AppColors.green : AppColors.sub)
+                if q.freshness != .closed { Pill(q.session.label, q.marketOpen ? AppColors.green : AppColors.sub) }
                 Pill(q.source, AppColors.accent)
                 if q.fallback { Pill("지연 가능 / 대체 데이터 사용 중", AppColors.orange) }
             }
