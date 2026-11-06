@@ -1,0 +1,145 @@
+name: PWA 웹앱 배포
+
+on:
+  push:
+    branches: [ main, master, 'claude/**' ]
+    paths: [ 'pwa/**', 'pwa-proxy/**', 'tools/pwa/**', 'data/**', '.github/workflows/pwa.yml' ]
+  schedule:
+    # 시세 스냅샷 갱신 (기본 브랜치에서만 동작): 한국·미국 장중 20분 간격, 그 외 2시간 간격
+    - cron: '7,27,47 0-7 * * 1-5'
+    - cron: '7,27,47 13-21 * * 1-5'
+    - cron: '17 */2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pwa-deploy
+  cancel-in-progress: false
+
+env:
+  SITE_URL: https://heonam5-create.github.io/ai-stock-pro/
+
+jobs:
+  proxy:
+    name: 실시간 프록시 배포 (Cloudflare 시크릿 등록 시에만)
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      HAS_CF: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.HAS_CF == 'true'
+      - name: wrangler deploy
+        id: deploy
+        if: env.HAS_CF == 'true'
+        working-directory: pwa-proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@3 deploy 2>&1 | tee deploy.log
+          URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "프록시: $URL"
+          curl -s "$URL/?u=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("https://polling.finance.naver.com/api/realtime/domestic/stock/005930"))')" -H "Origin: https://heonam5-create.github.io" | head -c 300; echo
+      - name: 안내
+        if: env.HAS_CF != 'true'
+        run: echo "::notice::Cloudflare 시크릿이 없어 실시간 프록시 배포를 건너뜁니다 (웹앱은 스냅샷 모드로 동작). pwa/docs/아이폰_설치_안내.md 참고."
+
+  build:
+    name: 테스트·스냅샷 수집·아이폰 점검·배포
+    needs: proxy
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 핵심 로직 단위 테스트
+        working-directory: pwa
+        run: npm test
+      - name: 스냅샷 캐시 복원 (일봉은 하루 1회 수집)
+        uses: actions/cache@v4
+        with:
+          path: snapcache
+          key: snap-${{ github.run_id }}
+          restore-keys: snap-
+      - name: 네이버 시세 스냅샷 수집
+        run: python3 tools/pwa/snapshot.py snapcache data
+      - name: 사이트 조립
+        env:
+          PROXY_URL: ${{ needs.proxy.outputs.url != '' && needs.proxy.outputs.url || vars.PWA_PROXY_URL }}
+          VERSION: ${{ github.run_number }}
+        run: |
+          tools/pwa/build.sh site
+          mkdir -p site/data/snapshot && cp -r snapcache/. site/data/snapshot/
+          rm -f site/data/snapshot/bars/_day.txt
+          du -sh site
+      - name: Playwright 설치
+        run: |
+          mkdir -p /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm i playwright@1.49.1 >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+      - name: 아이폰(iPhone 15) 화면 실제 점검 — 로컬 사이트 + 실제 스냅샷
+        run: |
+          (cd site && python3 -m http.server 8080 >/dev/null 2>&1 &)
+          sleep 1
+          NODE_PATH=/tmp/pw/node_modules node tools/pwa/e2e.mjs http://localhost:8080/ shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pwa-iphone-screenshots
+          path: shots
+      - name: GitHub Pages 배포 (gh-pages 브랜치)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "deploy PWA ${{ github.run_number }}"
+      - name: 배포 주소 접속 확인
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}config.js")
+            ver=$(curl -s "${SITE_URL}config.js" | grep -o "version: '[^']*'" || true)
+            echo "try $i: HTTP $code $ver"
+            if [ "$code" = "200" ] && echo "$ver" | grep -q "'${{ github.run_number }}'"; then echo "LIVE=1" >> $GITHUB_ENV; break; fi
+            sleep 15
+          done
+          if [ "${LIVE:-}" != "1" ] && ! grep -q LIVE=1 $GITHUB_ENV; then
+            echo "::warning::${SITE_URL} 에서 새 버전을 확인하지 못했습니다. 저장소 Settings → Pages 에서 Source 를 'Deploy from a branch · gh-pages · /(root)' 로 설정해야 할 수 있습니다."
+          fi
+      - name: 실제 배포 주소에서 아이폰 점검
+        if: env.LIVE == '1'
+        continue-on-error: true
+        run: NODE_PATH=/tmp/pw/node_modules node tools/pwa/e2e.mjs "$SITE_URL" shots-live
+      - name: 결과 요약
+        if: always()
+        run: |
+          {
+            echo "## PWA 배포 결과"
+            echo "- 주소: ${SITE_URL}"
+            python3 - <<'PY'
+          import json, os
+          for d in ("shots", "shots-live"):
+              p = f"{d}/results.json"
+              if os.path.exists(p):
+                  j = json.load(open(p))
+                  print(f"### {'실제 배포 주소' if d == 'shots-live' else '로컬 사이트(실제 스냅샷)'} 점검")
+                  for r in j["results"]:
+                      print(f"- {'✅' if r['ok'] else '❌'} {r['name']} {r['detail']}")
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: 스크린샷 저장소에 기록
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p pwa/docs/screenshots && cp shots/*.png pwa/docs/screenshots/ 2>/dev/null || true
+          cp shots/results.json pwa/docs/screenshots/ 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pwa/docs/screenshots
+          git diff --cached --quiet || { git commit -m "docs(pwa): 아이폰 화면 점검 스크린샷 [skip ci]"; git pull --rebase -q || true; git push || true; }
