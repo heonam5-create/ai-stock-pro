@@ -149,7 +149,7 @@ public enum AnalysisEngine {
             factors.append(Factor(no: 2, title: "상승·하락 모멘텀", status: st, detail: d, score: s, weight: 6, available: true))
         }
         // 3. 단기 매수 적합성
-        let extension = (price - ma20) / atr
+        let ext20 = (price - ma20) / atr
         do {
             let k = ind.stoch.k, dd = ind.stoch.d
             var pts = 0
@@ -160,7 +160,7 @@ public enum AnalysisEngine {
             else { notes.append("RSI \(rsiI)") }
             let distSup = nearSup.map { (price - $0.price) / atr } ?? .nan
             if !distSup.isNaN && distSup <= 1.2 { pts += 1; notes.append("지지선(\(p(nearSup!.price)))과 ATR \(Fmt.d(distSup, 1))배 거리로 근접") }
-            if extension > 2.5 { pts -= 1; notes.append("20일선 대비 ATR \(Fmt.d(extension, 1))배 이격 → 추격매수 위험") }
+            if ext20 > 2.5 { pts -= 1; notes.append("20일선 대비 ATR \(Fmt.d(ext20, 1))배 이격 → 추격매수 위험") }
             if k[i] > dd[i] && k[i - 1] <= dd[i - 1] && k[i] < 40 { pts += 1; notes.append("스토캐스틱 침체권 골든크로스") }
             if k[i] < dd[i] && k[i - 1] >= dd[i - 1] && k[i] > 70 { pts -= 1; notes.append("스토캐스틱 과열권 데드크로스") }
             let s = clamp(pts)
@@ -289,7 +289,7 @@ public enum AnalysisEngine {
         let trendS = factors[0].score, momS = factors[1].score
         if trendS <= -2 && momS <= -1 { verdict = .avoid; warnings.append("강한 하락 추세 + 하락 모멘텀으로 '매수 금지' 판정") }
         if atrPct > 8 && trendS < 0 && verdict != .avoid { verdict = .avoid; warnings.append("하락 추세 중 일 변동폭 8% 초과로 위험 판정") }
-        if verdict == .strongBuy && (rsi > 75 || extension > 3) { verdict = .splitBuy; warnings.append("단기 과열(RSI·이격)로 '적극 매수' → '분할매수'로 낮춤") }
+        if verdict == .strongBuy && (rsi > 75 || ext20 > 3) { verdict = .splitBuy; warnings.append("단기 과열(RSI·이격)로 '적극 매수' → '분할매수'로 낮춤") }
         if verdict == .strongBuy && factors[9].score <= -1 { verdict = .splitBuy; warnings.append("임박한 주요 일정으로 '적극 매수' → '분할매수'로 낮춤") }
 
         let strategy = buildStrategy(price: price, atr: atr, kr: kr, sup: supports, res: resistances, bars: bars, ma60: ma60, ma120: ma120, verdict: verdict)
