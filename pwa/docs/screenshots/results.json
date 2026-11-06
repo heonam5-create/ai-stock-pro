@@ -1,0 +1,106 @@
+{
+ "base": "http://localhost:8080/",
+ "results": [
+  {
+   "name": "1_home",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "홈: 지수 표시",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "2_search",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "검색: 초성 ㅅㅅㅈㅈ → 삼성전자",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "검색: 오타 한미반도채 → 한미반도체",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "검색: BRK.B",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "3_quote_samsung",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "시세: 가격·상태·제공업체 표시",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "4_analysis_samsung",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "분석: 10개 항목",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "분석: 매수·매도 전략 또는 보호 안내",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "5_analysis_nvda",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "6_best5_kr",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "BEST5: 분석 종목 수 표시",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "7_settings",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "설정: 전체 종목 목록 로드",
+   "ok": true,
+   "detail": "4318"
+  },
+  {
+   "name": "manifest: standalone·아이콘",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "apple-touch-icon·standalone 메타",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Service Worker 등록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "JS 오류 없음",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "errors": []
+}
