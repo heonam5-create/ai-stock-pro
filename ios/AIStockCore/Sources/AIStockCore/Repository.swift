@@ -106,7 +106,8 @@ public actor Repository {
 
     func fromNaver(_ ref: StockRef, _ s: NaverSource.Snap, yahoo: ChartMeta?, finnhub: (Double, Int64)?, now: Int64) -> Quote {
         let kr = ref.market == .KR
-        let open = s.isOpen
+        // 네이버는 NXT·시간외가 열려 있으면 정규장 마감 후에도 OPEN 을 줄 수 있음 → 정규장 시간표와 함께 판단 (2026-11-06 실측)
+        let open = QuoteLogic.regularOpen(naverStatusOpen: s.isOpen, market: ref.market, at: Date(timeIntervalSince1970: TimeInterval(now)))
         let fr = QuoteLogic.freshness(open: open, tradedAt: s.tradedAt, nowSec: now, delayMin: s.delayMin, sourceRealtime: true)
         let session: Session = open ? .regular : .closed
         var checks = [QuoteLogic.crossCheck(primaryPrice: s.price, primaryTime: s.tradedAt, primaryOpen: open, source: YahooSource.name,

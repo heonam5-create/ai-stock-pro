@@ -1,0 +1,56 @@
+# XcodeGen 프로젝트 정의 — `xcodegen generate` 로 AIStockPro.xcodeproj 생성 (CI 에서 자동 실행)
+name: AIStockPro
+options:
+  bundleIdPrefix: com.aistock
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: ko
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  AIStockCore:
+    path: AIStockCore
+targets:
+  AIStockPro:
+    type: application
+    platform: iOS
+    sources:
+      - path: AIStockPro/Sources
+      - path: AIStockPro/Resources
+    dependencies:
+      - package: AIStockCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.heonam5.aistockpro
+        PRODUCT_NAME: AIStockPro
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone 전용
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_FILE: AIStockPro/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+    info:
+      path: AIStockPro/Info.plist
+      properties:
+        CFBundleDisplayName: AI 주식 분석센터 PRO
+        CFBundleName: AIStockPro
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: ko
+        LSRequiresIPhoneOS: true
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]     # 세로 화면 전용
+        UIRequiresFullScreen: true
+        UIUserInterfaceStyle: Dark                                              # 다크모드 기본
+        UILaunchScreen:
+          UIColorName: LaunchBg
+          UIImageName: LaunchLogo
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.aistock.pro.alertcheck]
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false

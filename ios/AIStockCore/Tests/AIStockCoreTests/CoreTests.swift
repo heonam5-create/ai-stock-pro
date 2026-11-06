@@ -191,3 +191,14 @@ final class LiveQuoteTests: XCTestCase {
         XCTAssertGreaterThan(ok, 0)
     }
 }
+
+final class SessionTests: XCTestCase {
+    func testNxtAfterMarketIsNotRegularSession() {
+        // 2026-11-06 15:58 KST: 네이버 marketStatus=OPEN (NXT 애프터마켓) 이지만 KRX 정규장은 15:30 마감
+        let t = Date(timeIntervalSince1970: 1_793_948_280)   // 2026-11-06 06:58 UTC
+        XCTAssertFalse(QuoteLogic.regularOpen(naverStatusOpen: true, market: .KR, at: t))
+        let t2 = Date(timeIntervalSince1970: 1_793_940_000)  // 2026-11-06 13:40 KST
+        XCTAssertTrue(QuoteLogic.regularOpen(naverStatusOpen: true, market: .KR, at: t2))
+        XCTAssertFalse(QuoteLogic.regularOpen(naverStatusOpen: false, market: .KR, at: t2))   // 휴장일 등
+    }
+}

@@ -13,9 +13,12 @@ concurrency:
   group: ios-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID != '' && vars.IOS_BUNDLE_ID || 'com.heonam5.aistockpro' }}
+
 jobs:
   core:
-    name: 코어(분석·시세·검색) 컴파일·단위 테스트
+    name: 코어(분석·시세·검색) 단위 테스트
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +30,9 @@ jobs:
         run: |
           set -o pipefail
           swift test 2>&1 | tee ../../core-test.log
-          grep -E "Executed|error:" ../../core-test.log | tail -5
-      - name: 실제 시세 검증 (네이버 기본 · Yahoo 교차검증, 참고용)
+          grep -E "Executed|error:" ../../core-test.log | tail -3
+          { echo "## iOS 코어 단위 테스트"; grep -E "Executed [0-9]+ tests" ../../core-test.log | tail -1; } >> "$GITHUB_STEP_SUMMARY"
+      - name: 실제 시세 검증 (네이버 기본 · Yahoo 교차검증)
         continue-on-error: true
         working-directory: ios/AIStockCore
         env:
@@ -37,3 +41,147 @@ jobs:
         run: |
           swift test --filter LiveQuoteTests
           if [ -f "$LIVE_QUOTE_OUT" ]; then { echo "## iOS 실제 시세 검증"; cat "$LIVE_QUOTE_OUT"; } >> "$GITHUB_STEP_SUMMARY"; fi
+
+  app:
+    name: 앱 빌드(시뮬레이터·기기) + 실행 스크린샷
+    needs: core
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen 설치·프로젝트 생성
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: 기기용 빌드 (서명 없이 컴파일 검증)
+        working-directory: ios
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild -project AIStockPro.xcodeproj -scheme AIStockPro -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" build 2>&1 \
+            | tee device-build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" | head -80
+      - name: 시뮬레이터 빌드
+        working-directory: ios
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild -project AIStockPro.xcodeproj -scheme AIStockPro -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim CODE_SIGNING_ALLOWED=NO build 2>&1 \
+            | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | head -80
+      - name: 시뮬레이터에서 실행·스크린샷
+        working-directory: ios
+        shell: bash
+        run: |
+          APP=$(find build/sim -name "AIStockPro.app" -path "*iphonesimulator*" | head -1)
+          DEV=$(xcrun simctl list devices available | grep -E "iPhone 16( |$)| iPhone 16 \(" | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          [ -z "$DEV" ] && DEV=$(xcrun simctl list devices available | grep -m1 "iPhone" | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          echo "device $DEV app $APP"
+          xcrun simctl boot "$DEV" || true
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" "$APP"
+          mkdir -p shots
+          shot() { # 이름, 대기초, 실행 인자...
+            name=$1; wait=$2; shift 2
+            xcrun simctl terminate "$DEV" "$BUNDLE_ID" 2>/dev/null || true
+            xcrun simctl launch "$DEV" "$BUNDLE_ID" "$@"
+            sleep "$wait"
+            xcrun simctl io "$DEV" screenshot "shots/$name.png"
+          }
+          # 시뮬레이터 앱의 번들 ID 는 빌드 기본값
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$APP/Info.plist")
+          shot 1_home 12
+          shot 2_analysis_samsung 14 -openSymbol 005930.KS -startTab analysis
+          shot 3_analysis_sndk_ai 22 -openSymbol SNDK -runAnalysis 1
+          shot 4_best5 6 -startTab best
+          shot 5_watch 5 -startTab watch
+          shot 6_settings 5 -startTab settings
+          ls -la shots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-screenshots
+          path: ios/shots/*.png
+      - name: 스크린샷 저장소에 기록 (docs)
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p ios/docs/screenshots && cp ios/shots/*.png ios/docs/screenshots/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ios/docs/screenshots
+          git diff --cached --quiet || { git commit -m "docs(ios): 시뮬레이터 실행 스크린샷 갱신 [skip ci]"; git pull --rebase -q || true; git push || true; }
+      - name: Xcode 프로젝트 압축 (다운로드용)
+        working-directory: ios
+        run: zip -qr AIStockPro-xcode-project.zip AIStockPro.xcodeproj project.yml AIStockPro AIStockCore -x "AIStockCore/.build/*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIStockPro-Xcode-Project
+          path: ios/AIStockPro-xcode-project.zip
+
+  testflight:
+    name: 서명·TestFlight 업로드 (Apple 시크릿 등록 시에만)
+    needs: app
+    runs-on: macos-15
+    env:
+      HAS_APPLE: ${{ secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && secrets.ASC_KEY_P8 != '' && secrets.APPLE_TEAM_ID != '' }}
+    steps:
+      - name: 시크릿 확인
+        run: |
+          if [ "$HAS_APPLE" != "true" ]; then
+            echo "::notice::Apple Developer 시크릿(APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8)이 없어 TestFlight 업로드를 건너뜁니다. ios/docs/01_아이폰_설치_설명서.md 참고."
+          fi
+      - uses: actions/checkout@v4
+        if: env.HAS_APPLE == 'true'
+      - name: App Store Connect API 키 준비
+        if: env.HAS_APPLE == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          KEYFILE="$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          if echo "$ASC_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then printf '%s\n' "$ASC_KEY_P8" > "$KEYFILE"; else echo "$ASC_KEY_P8" | base64 -d > "$KEYFILE"; fi
+          echo "KEYFILE=$KEYFILE" >> "$GITHUB_ENV"
+      - name: 아카이브 (자동 서명)
+        if: env.HAS_APPLE == 'true'
+        working-directory: ios
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        shell: bash
+        run: |
+          set -o pipefail
+          brew install xcodegen && xcodegen generate
+          xcodebuild -project AIStockPro.xcodeproj -scheme AIStockPro -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/AIStockPro.xcarchive archive \
+            DEVELOPMENT_TEAM="$TEAM" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEYFILE" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)|Signing" | head -60
+      - name: TestFlight 업로드 (App Store Connect)
+        if: env.HAS_APPLE == 'true'
+        working-directory: ios
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/AIStockPro.xcarchive -exportOptionsPlist ExportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEYFILE" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 \
+            | grep -E "error:|EXPORT (SUCCEEDED|FAILED)|Upload|Uploaded" | head -40
+          echo "## TestFlight 업로드 완료 — 빌드 ${{ github.run_number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "App Store Connect > TestFlight 에서 처리(10~30분) 후 테스터에게 배포됩니다." >> "$GITHUB_STEP_SUMMARY"

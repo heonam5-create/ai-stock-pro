@@ -15,6 +15,11 @@ public enum QuoteLogic {
         return age > 5 * 86400 ? .stale : .closed
     }
 
+    /// 정규장 진행 여부 = 공급원 상태 OPEN 이면서 정규장 시간표(한국 09:00~15:30, 미국 09:30~16:00 현지) 안
+    public static func regularOpen(naverStatusOpen: Bool, market: Market, at: Date) -> Bool {
+        naverStatusOpen && MarketClock.isOpen(market, now: at)
+    }
+
     public static func delayText(_ source: String, _ delayMin: Int?, kr: Bool, fallback: Bool = false) -> String {
         let base: String
         if let d = delayMin { base = d == 0 ? "\(source) · 지연 0분(공급원 표기 기준)" : "\(source) · 약 \(d)분 지연" }
