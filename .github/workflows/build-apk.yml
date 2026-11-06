@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, master, 'claude/**' ]
     # iOS·종목목록·문서만 바뀐 경우 안드로이드 APK 를 다시 만들지 않음
-    paths-ignore: [ 'ios/**', 'data/**', 'tools/**', 'docs/**', '**.md', '.github/workflows/ios.yml', '.github/workflows/stock-lists.yml', '.github/workflows/probe.yml' ]
+    paths-ignore: [ 'ios/**', 'pwa/**', 'pwa-proxy/**', 'data/**', 'tools/**', 'docs/**', '**.md', '.github/workflows/pwa.yml', '.github/workflows/ios.yml', '.github/workflows/stock-lists.yml', '.github/workflows/probe.yml' ]
   workflow_dispatch: {}
 
 permissions:
