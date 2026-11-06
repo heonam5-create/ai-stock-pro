@@ -127,7 +127,10 @@ struct NumField: View {
 struct EditHoldingSheet: View {
     let w: WatchItem
     let onSave: (WatchItem) -> Void
-    @State var qty = "", avg = "", target = "", stop = ""
+    @State var qty = ""
+    @State var avg = ""
+    @State var target = ""
+    @State var stop = ""
     @Environment(\.dismiss) var dismiss
     var body: some View {
         NavigationStack {
@@ -153,7 +156,10 @@ struct EditHoldingSheet: View {
 struct CalcSheet: View {
     let w: WatchItem, current: Double?, kr: Bool
     @State var mode = 0
-    @State var q1 = "", p1 = "", q2 = "", p2 = ""
+    @State var q1 = ""
+    @State var p1 = ""
+    @State var q2 = ""
+    @State var p2 = ""
     @Environment(\.dismiss) var dismiss
     var body: some View {
         NavigationStack {

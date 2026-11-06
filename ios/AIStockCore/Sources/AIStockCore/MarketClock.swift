@@ -15,7 +15,7 @@ public enum MarketClock {
         return market == .KR ? (m >= 540 && m < 930) : (m >= 570 && m < 960)
     }
 
-    static func fmt(_ tz: TimeZone, _ pattern: String = "yyyy-MM-dd HH:mm") -> DateFormatter {
+    public static func fmt(_ tz: TimeZone, _ pattern: String = "yyyy-MM-dd HH:mm") -> DateFormatter {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = tz; f.dateFormat = pattern; return f
     }
 
