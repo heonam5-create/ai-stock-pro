@@ -6,6 +6,7 @@ struct AnalysisView: View {
     @Environment(\.scenePhase) var phase
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: 0) {
                 Header(subtitle: m.selected.map { "\($0.displayName) · \($0.symbol)" } ?? "종목을 검색하세요") {
@@ -22,6 +23,11 @@ struct AnalysisView: View {
                     Disclaimer()
                 }
             }
+        }
+        .onChange(of: m.analysis.value?.result.score) { _ in
+            // 자동 점검(CI 스크린샷)용: -scrollTo verdict
+            if UserDefaults.standard.string(forKey: "scrollTo") == "verdict" { withAnimation { proxy.scrollTo("verdict", anchor: .top) } }
+        }
         }
         .background(AppColors.bg)
         // 화면이 보이고 앱이 활성일 때만 자동 새로고침 (공급원 호출 제한 고려)
@@ -88,7 +94,7 @@ struct AnalysisView: View {
         case .loading: LoadingBox(text: "시세·뉴스 수집 및 분석 중… (5~15초)")
         case .failure(let e): ErrorBox(message: e) { m.runAnalysis() }
         case .success(let fa):
-            PriceGuard(q: fa.quote)
+            PriceGuard(q: fa.quote).id("verdict")
             VerdictCard(r: fa.result, q: fa.quote, barsSource: fa.barsSource)
             FactorsCard(r: fa.result)
             if fa.quote.unreliable {

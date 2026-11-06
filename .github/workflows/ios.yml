@@ -46,6 +46,7 @@ jobs:
     name: 앱 빌드(시뮬레이터·기기) + 실행 스크린샷
     needs: core
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: XcodeGen 설치·프로젝트 생성
@@ -92,8 +93,9 @@ jobs:
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$APP/Info.plist")
           shot 1_home 12
           shot 2_analysis_samsung 14 -openSymbol 005930.KS -startTab analysis
-          shot 3_analysis_sndk_ai 22 -openSymbol SNDK -runAnalysis 1
-          shot 4_best5 6 -startTab best
+          shot 3_analysis_sndk_ai 25 -openSymbol SNDK -runAnalysis 1 -scrollTo verdict
+          shot 3b_analysis_hanmi_ai 25 -openSymbol 042700.KS -runAnalysis 1 -scrollTo verdict
+          shot 4_best5_kr 150 -startTab best -runBest 1
           shot 5_watch 5 -startTab watch
           shot 6_settings 5 -startTab settings
           ls -la shots
