@@ -116,7 +116,7 @@ private fun AnalysisBody(vm: MainViewModel, ref: StockRef) {
             ChipRow {
                 Interval.entries.forEach { itv ->
                     val reason = vm.unsupported[itv]
-                    SelectChip(itv.label, vm.interval == itv, enabled = reason == null) { vm.setInterval(itv) }
+                    SelectChip(itv.label, vm.interval == itv, enabled = reason == null) { vm.selectInterval(itv) }
                 }
             }
             vm.unsupported.values.firstOrNull()?.let { Text("※ $it (비활성화됨)", color = AppColors.Orange, fontSize = 11.sp) }

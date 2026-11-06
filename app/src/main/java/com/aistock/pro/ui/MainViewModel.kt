@@ -130,7 +130,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshQuote() { viewModelScope.launch(guard) { loadQuote() } }
 
-    fun setInterval(i: Interval) {
+    fun selectInterval(i: Interval) {
         if (unsupported.containsKey(i)) return
         interval = i
         viewModelScope.launch(guard) { loadChart() }
