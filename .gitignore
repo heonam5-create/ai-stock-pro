@@ -1,0 +1,12 @@
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+# 서명키·비밀 파일은 절대 커밋하지 않음
+*.jks
+*.keystore
+keystore.properties

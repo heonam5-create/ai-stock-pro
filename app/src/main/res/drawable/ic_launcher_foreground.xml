@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108x108 적응형 아이콘: 상승 캔들 + 추세선 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 캔들 3개 -->
+    <path android:fillColor="#FF3B82F6" android:pathData="M36,58h8v16h-8z" />
+    <path android:fillColor="#FF3B82F6" android:pathData="M39.5,54h1v24h-1z" />
+    <path android:fillColor="#FFEF4444" android:pathData="M50,46h8v20h-8z" />
+    <path android:fillColor="#FFEF4444" android:pathData="M53.5,40h1v30h-1z" />
+    <path android:fillColor="#FFEF4444" android:pathData="M64,36h8v20h-8z" />
+    <path android:fillColor="#FFEF4444" android:pathData="M67.5,30h1v30h-1z" />
+    <!-- 추세선 -->
+    <path android:strokeColor="#FFFACC15" android:strokeWidth="3"
+        android:strokeLineCap="round" android:fillColor="#00000000"
+        android:pathData="M32,72 L46,60 L58,58 L76,40" />
+    <path android:fillColor="#FFFACC15" android:pathData="M76,34 L80,44 L70,42 Z" />
+</vector>
