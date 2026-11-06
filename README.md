@@ -36,3 +36,8 @@ app/src/test/    분석 엔진 자동 테스트 (16개)
 ```
 
 ※ 투자 권유가 아닌 참고용 분석 도구입니다. 무료 시세는 지연될 수 있습니다.
+
+## 아이폰(iOS) 버전
+`ios/` 폴더에 Swift/SwiftUI로 새로 만든 아이폰 전용 앱이 있습니다 (안드로이드 코드와 별도).
+- 설치 방법(Apple Developer 가입 · TestFlight): [`ios/docs/01_아이폰_설치_설명서.md`](ios/docs/01_아이폰_설치_설명서.md)
+- 자동 빌드: GitHub Actions `iOS 빌드·테스트` · 종목 목록 자동 갱신: `종목 목록 갱신`
