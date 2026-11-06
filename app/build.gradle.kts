@@ -48,7 +48,13 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.environment("LIVE_QUOTE_TEST", System.getenv("LIVE_QUOTE_TEST") ?: "0")
+            System.getenv("LIVE_QUOTE_OUT")?.let { o -> it.environment("LIVE_QUOTE_OUT", o) }
+        }
+    }
     lint {
         abortOnError = false
         checkReleaseBuilds = false
@@ -72,4 +78,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")   // 단위 테스트에서 실제 org.json 사용 (안드로이드 스텁 대체)
 }

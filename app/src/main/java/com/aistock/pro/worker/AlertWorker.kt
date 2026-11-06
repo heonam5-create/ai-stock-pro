@@ -69,10 +69,11 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
 
         for ((sym, rules) in active.groupBy { it.symbol }) {
             try {
-                val cd = repo.chart(sym, Interval.D1, maxAgeMs = 0L)
                 val ref = StockRef(sym, rules.first().name, rules.first().name)
-                val q = repo.buildQuote(ref, cd)
-                val bars = cd.bars
+                val q = repo.quote(ref, withCap = false)
+                // 오래되었거나 공급원 간 불일치가 있는 시세로는 알림을 보내지 않음 (다음 주기에 재확인)
+                if (q.unreliable) continue
+                val bars = runCatching { repo.alignedDaily(q, 0L) }.getOrDefault(emptyList())
                 val avg20 = if (bars.size > 21) bars.subList(bars.size - 21, bars.size - 1).map { it.v }.average() else null
                 val kr = ref.market == Market.KR
                 for (r in rules) {

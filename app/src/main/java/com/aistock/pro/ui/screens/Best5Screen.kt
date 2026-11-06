@@ -97,6 +97,7 @@ fun Best5Screen(vm: MainViewModel) {
 private fun BestResultView(vm: MainViewModel, res: Repository.BestResult, market: Market) {
     Text(
         "분석 완료 ${MarketClock.formatKst(res.at)} · 분석 ${res.analyzed}종목 · 추천 제외(매수 금지·분할매도·분석 불가) ${res.excluded}종목" +
+            (if (res.staleExcluded > 0) " · 시세 지연·불일치로 제외 ${res.staleExcluded}종목" else "") +
             (if (res.failed.isNotEmpty()) " · 데이터 수집 실패 ${res.failed.size}종목(${res.failed.take(5).joinToString()})" else ""),
         color = AppColors.Sub, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(horizontal = 16.dp),
     )

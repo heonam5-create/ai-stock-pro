@@ -48,10 +48,41 @@ data class ChartMeta(
 
 data class ChartData(val meta: ChartMeta, val bars: List<Bar>, val interval: Interval, val fetchedAt: Long)
 
+/** 거래 세션 */
+enum class Session(val label: String) {
+    PRE("프리마켓"), REGULAR("정규장"), POST("애프터마켓"), NXT("NXT 대체거래소"), CLOSED("장 마감"), UNKNOWN("세션 확인 불가")
+}
+
+/** 시세 신선도 — 화면에 그대로 표시. 실시간이 아닌 값을 실시간으로 표시하지 않기 위한 단일 기준 */
+enum class Freshness(val label: String) {
+    REALTIME("실시간"), DELAYED("지연 시세"), CLOSED("장 마감"), STALE("⚠ 시세 지연"), ERROR("⚠ 데이터 오류")
+}
+
+/** 정규장 외 가격 (미국 프리·애프터마켓, 한국 NXT) — 정규장 가격과 섞지 않고 별도로 표시 */
+data class ExtPrice(
+    val session: Session,
+    val label: String,             // 예: "애프터마켓", "NXT 애프터마켓"
+    val price: Double,
+    val change: Double?,           // 정규장 기준가 대비
+    val changePct: Double?,
+    val time: Long,                // epoch 초
+    val active: Boolean,           // 해당 세션이 현재 진행 중인지
+)
+
+/** 복수 공급원 교차검증 결과 */
+data class CrossCheck(
+    val source: String,
+    val price: Double?,
+    val time: Long?,
+    val diffPct: Double?,
+    val mismatch: Boolean,
+    val message: String,
+)
+
 data class Quote(
     val ref: StockRef,
     val currency: String,
-    val price: Double,
+    val price: Double,             // 정규장 가격 (장중=현재가, 장 마감=정규장 종가). 분석·손익·알림의 단일 기준
     val prevClose: Double?,
     val change: Double?,
     val changePct: Double?,
@@ -62,11 +93,22 @@ data class Quote(
     val low52: Double?,
     val marketCap: Double?,        // 통화 단위 그대로 (원 / 달러)
     val marketCapSource: String?,
-    val marketTime: Long,
+    val marketTime: Long,          // price 의 체결(기준) 시각, epoch 초
     val timezone: String,
-    val marketOpen: Boolean,
-    val statusText: String,        // "장중 · 지연 시세" / "장 마감 · 최근 종가" 등
-)
+    val marketOpen: Boolean,       // 정규장 진행 중
+    val statusText: String,        // 예: "실시간 · 정규장", "장 마감 · 정규장 종가"
+    val session: Session = if (marketOpen) Session.REGULAR else Session.CLOSED,
+    val freshness: Freshness = Freshness.DELAYED,
+    val source: String = "Yahoo Finance",
+    val delayText: String = "",    // 예: "실시간(지연 0분)", "최대 20분 지연 가능"
+    val ext: ExtPrice? = null,
+    val check: CrossCheck? = null,
+    val fetchedAt: Long = System.currentTimeMillis(),   // 앱이 마지막으로 받아온 시각(ms)
+    val warning: String? = null,   // 시세 신뢰도 경고 (있으면 화면 상단에 표시)
+) {
+    /** 매수·매도 판단에 쓰면 안 되는 상태 */
+    val unreliable: Boolean get() = freshness == Freshness.STALE || freshness == Freshness.ERROR || check?.mismatch == true
+}
 
 enum class Sentiment(val label: String) { POSITIVE("호재"), NEGATIVE("악재"), NEUTRAL("중립") }
 

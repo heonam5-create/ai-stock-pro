@@ -51,7 +51,16 @@ jobs:
       - name: 분석 엔진 단위 테스트
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest --stacktrace
+          ./gradlew testDebugUnitTest
+
+      - name: 실제 시세 검증 (네이버 기본 · Yahoo 교차검증, 참고용)
+        continue-on-error: true
+        env:
+          LIVE_QUOTE_TEST: '1'
+          LIVE_QUOTE_OUT: ${{ runner.temp }}/live-quotes.md
+        run: |
+          ./gradlew :app:testDebugUnitTest --tests 'com.aistock.pro.data.LiveQuoteTest' --rerun
+          if [ -f "$LIVE_QUOTE_OUT" ]; then cat "$LIVE_QUOTE_OUT"; { echo "## 실제 시세 검증"; cat "$LIVE_QUOTE_OUT"; } >> "$GITHUB_STEP_SUMMARY"; fi
 
       - name: APK 빌드
         env:

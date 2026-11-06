@@ -11,6 +11,8 @@ import com.aistock.pro.data.AlertType
 import com.aistock.pro.data.ChartData
 import com.aistock.pro.data.DataException
 import com.aistock.pro.data.ExternalAi
+import com.aistock.pro.data.Freshness
+import com.aistock.pro.data.QuoteLogic
 import com.aistock.pro.data.Http
 import com.aistock.pro.data.Interval
 import com.aistock.pro.data.Market
@@ -128,7 +130,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) { UiState.Error(Http.friendly(e)) }
     }
 
-    fun refreshQuote() { viewModelScope.launch(guard) { loadQuote() } }
+    fun refreshQuote() { viewModelScope.launch(guard) { silentRefreshQuote() } }
+
+    /** 자동/수동 새로고침: 기존 화면을 지우지 않고 시세만 갱신. 실패 시 이전 값을 '데이터 오류'로 표시 */
+    var refreshing by mutableStateOf(false)
+        private set
+
+    suspend fun silentRefreshQuote() {
+        val ref = selected ?: return
+        val prev = (quoteState as? UiState.Success)?.data
+        if (prev == null) { loadQuote(); return }
+        refreshing = true
+        try {
+            val q = repo.quote(ref)
+            if (selected?.symbol == ref.symbol) quoteState = UiState.Success(q)
+        } catch (e: Exception) {
+            if (selected?.symbol == ref.symbol) quoteState = UiState.Success(prev.copy(
+                freshness = Freshness.ERROR,
+                statusText = QuoteLogic.statusText(Freshness.ERROR, prev.session, prev.marketOpen, 0),
+                warning = "새로고침 실패: ${Http.friendly(e)} — 표시된 값은 이전에 받은 데이터입니다.",
+            ))
+        } finally { refreshing = false }
+    }
+
+    /** 다음 자동 새로고침까지 대기 시간(ms) */
+    fun nextRefreshMs(): Long = (quoteState as? UiState.Success)?.data?.let { QuoteLogic.refreshMs(it) } ?: 30_000L
+
+    /** 분석에 쓴 시세가 현재 시세와 달라졌으면 경고 문구 (오래된 가격으로 매매 판단 방지) */
+    fun analysisDrift(): String? {
+        val fa = (analysisState as? UiState.Success)?.data ?: return null
+        val cur = (quoteState as? UiState.Success)?.data ?: return null
+        if (fa.quote.ref.symbol != cur.ref.symbol) return null
+        val d = (cur.price / fa.quote.price - 1) * 100
+        val ageMin = (System.currentTimeMillis() - fa.quote.fetchedAt) / 60_000
+        return when {
+            kotlin.math.abs(d) >= 1.0 -> "분석 이후 가격이 ${com.aistock.pro.analysis.Fmt.pct(d)} 변동했습니다. 매수·매도가를 다시 계산하려면 'AI 종합 분석'을 다시 누르세요."
+            cur.marketOpen && ageMin >= 30 -> "분석한 지 ${ageMin}분이 지났습니다. 장중이므로 다시 분석하세요."
+            else -> null
+        }
+    }
 
     fun selectInterval(i: Interval) {
         if (unsupported.containsKey(i)) return

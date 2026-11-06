@@ -60,6 +60,13 @@ object FinnhubSource {
     private const val BASE = "https://finnhub.io/api/v1"
     private val ymd = DateTimeFormatter.ISO_LOCAL_DATE
 
+    /** 현재가 교차검증용: (가격, 체결 시각 epoch 초). 무료 키 · 미국 주식 */
+    suspend fun quote(key: String, symbol: String): Pair<Double, Long>? {
+        val o = JSONObject(Http.get("$BASE/quote?symbol=${symbol}&token=$key", retries = 1))
+        val c = o.optDouble("c", Double.NaN); val t = o.optLong("t", 0L)
+        return if (c.isNaN() || c <= 0 || t <= 0) null else c to t
+    }
+
     suspend fun marketCapUsd(key: String, symbol: String): Double? {
         val o = JSONObject(Http.get("$BASE/stock/profile2?symbol=${symbol}&token=$key", retries = 1))
         val m = o.optDouble("marketCapitalization", Double.NaN)  // 백만 달러 단위

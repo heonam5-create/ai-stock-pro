@@ -40,7 +40,10 @@ class Repository(private val prefs: Prefs) {
         chartCache[key]?.let { if (System.currentTimeMillis() - it.fetchedAt < maxAgeMs) return it }
         val data = try {
             YahooSource.chart(sym, interval).also { if (it.bars.isEmpty()) throw DataException("empty") }
-        } catch (e: DataException) {
+        } catch (e: Exception) {
+            // Yahoo 차단(429)·오류 시 일봉은 네이버 금융으로 대체
+            if (interval == Interval.D1) naverDaily(sym)?.let { chartCache[key] = it; return it }
+            if (e !is DataException) throw e
             val a = alt(sym) ?: throw if (e.message == "empty") DataException("'$sym' 의 ${interval.label} 데이터가 제공되지 않습니다.") else e
             // 코스피↔코스닥 이전 상장 대비 자동 재시도
             val d2 = runCatching { YahooSource.chart(a, interval) }.getOrNull()
@@ -50,6 +53,20 @@ class Repository(private val prefs: Prefs) {
         chartCache[key] = data
         return data
     }
+
+    private suspend fun naverDaily(sym: String): ChartData? = runCatching {
+        val ref = StockRef(sym, sym)
+        val bars = NaverSource.daily(ref)
+        if (bars.size < 2) return null
+        val kr = ref.market == Market.KR
+        val last252 = bars.takeLast(252)
+        ChartData(
+            ChartMeta(sym, if (kr) "KRW" else "USD", "", null, null, bars.last().t,
+                if (kr) "Asia/Seoul" else "America/New_York",
+                last252.maxOf { it.h }, last252.minOf { it.l }, null, null, null, null),
+            bars, Interval.D1, System.currentTimeMillis(),
+        )
+    }.getOrNull()
 
     fun cachedChart(symbol: String, interval: Interval): ChartData? = chartCache["${fixed(symbol)}|${interval.name}"]
 
@@ -68,7 +85,10 @@ class Repository(private val prefs: Prefs) {
         val chg = prev?.let { price - it }
         val chgPct = prev?.let { (price / it - 1) * 100 }
         val last252 = bars.takeLast(252)
-        val (open, status) = MarketClock.status(ref.market, mt)
+        val open = MarketClock.isOpen(ref.market)
+        val nowSec = System.currentTimeMillis() / 1000
+        val fr = QuoteLogic.freshness(open, mt, nowSec, null, false)
+        val status = QuoteLogic.statusText(fr, if (open) Session.REGULAR else Session.CLOSED, open, (nowSec - mt) / 60)
         val name = if (ref.name.isBlank() || ref.name == ref.symbol) (m.longName ?: ref.name) else ref.name
         return Quote(
             ref = ref.copy(name = name, exchange = ref.exchange.ifBlank { m.exchange }),
@@ -80,13 +100,53 @@ class Repository(private val prefs: Prefs) {
             low52 = m.low52 ?: last252.minOfOrNull { it.l },
             marketCap = marketCap, marketCapSource = capSource,
             marketTime = mt, timezone = m.timezone, marketOpen = open, statusText = status,
+            freshness = fr, source = "Yahoo Finance",
+            delayText = QuoteLogic.delayText("Yahoo Finance", null, ref.market == Market.KR),
+            fetchedAt = cd.fetchedAt,
         )
     }
 
-    /** 현재가 + 일봉 2년 (분석·52주 계산 공용) */
-    suspend fun quote(ref: StockRef, withCap: Boolean = true): Quote {
-        val cd = chart(ref.symbol, Interval.D1)
+    private val quoteCache = ConcurrentHashMap<String, Quote>()   // 마지막 성공 시세 (오류 시 '오래된 데이터'로만 표시)
+
+    /**
+     * 현재가 스냅샷 (분석·손익·추천·알림 공용 단일 기준).
+     * 1) 기본: 네이버 금융 실시간 시세 (정규장 가격 + 프리/애프터·NXT 별도)
+     * 2) 보조: Yahoo 일봉 메타(정규장 가격·시각)로 교차검증, Finnhub 키가 있으면 미국 종목 추가 검증
+     * 3) 기본 공급원 실패 시 Yahoo 로 대체하고 '지연 가능'으로 표시
+     * 4) 모두 실패하면 마지막 성공값을 '데이터 오류'로 표시 (최신가처럼 보이지 않게)
+     */
+    suspend fun quote(ref: StockRef, withCap: Boolean = true): Quote = coroutineScope {
+        val cdDef = async { runCatching { chart(ref.symbol, Interval.D1) } }
+        val nvDef = async { runCatching { NaverSource.quote(ref) } }
+        val fhDef = async {
+            if (ref.market == Market.US && prefs.finnhubKey.isNotBlank())
+                runCatching { FinnhubSource.quote(prefs.finnhubKey, ref.symbol) }.getOrNull() else null
+        }
+        val cdRes = cdDef.await(); val nvRes = nvDef.await(); val fh = fhDef.await()
+        val cd = cdRes.getOrNull(); val nv = nvRes.getOrNull()
         val realRef = if (fixed(ref.symbol) != ref.symbol) ref.copy(symbol = fixed(ref.symbol)) else ref
+        val kr = ref.market == Market.KR
+
+        val base: Quote = when {
+            nv != null -> fromNaver(realRef, nv, cd, fh)
+            cd != null -> {
+                val y = buildQuote(realRef, cd)
+                val chk = fh?.let { QuoteLogic.crossCheck(y.price, y.marketTime, y.marketOpen, "Finnhub", it.first, it.second) }
+                    ?: CrossCheck(NaverSource.NAME, null, null, null, false, "기본 공급원(네이버) 응답 실패 — Yahoo 지연 시세로 대체")
+                y.copy(check = chk, warning = if (chk.mismatch) chk.message else "기본 공급원 응답이 없어 Yahoo 시세(지연 가능)를 표시합니다.")
+            }
+            else -> {
+                val old = quoteCache[realRef.symbol]
+                val err = nvRes.exceptionOrNull() ?: cdRes.exceptionOrNull() ?: DataException("시세를 불러오지 못했습니다.")
+                if (old == null) throw err
+                return@coroutineScope old.copy(
+                    freshness = Freshness.ERROR,
+                    statusText = QuoteLogic.statusText(Freshness.ERROR, old.session, old.marketOpen, 0),
+                    warning = "최신 시세를 받지 못했습니다 (${Http.friendly(err)}). 표시된 값은 ${MarketClock.formatKst(old.fetchedAt / 1000)} 에 받은 데이터입니다.",
+                )
+            }
+        }
+
         var cap: Double? = null; var src: String? = null
         if (withCap) {
             val cached = capCache[realRef.symbol]
@@ -98,7 +158,52 @@ class Repository(private val prefs: Prefs) {
                 src = if (cap != null) capSourceName(realRef) else null
             }
         }
-        return buildQuote(realRef, cd, cap, src)
+        val q = base.copy(marketCap = cap, marketCapSource = src)
+        quoteCache[realRef.symbol] = q
+        q
+    }
+
+    private fun fromNaver(ref: StockRef, nv: NaverSource.Snap, cd: ChartData?, fh: Pair<Double, Long>?): Quote {
+        val nowSec = System.currentTimeMillis() / 1000
+        val kr = ref.market == Market.KR
+        val open = nv.open_
+        val fr = QuoteLogic.freshness(open, nv.tradedAt, nowSec, nv.delayMin, true)
+        val session = if (open) Session.REGULAR else Session.CLOSED
+        val checks = listOfNotNull(
+            QuoteLogic.crossCheck(nv.price, nv.tradedAt, open, "Yahoo Finance", cd?.meta?.price, cd?.meta?.marketTime?.takeIf { it > 0 }),
+            fh?.let { QuoteLogic.crossCheck(nv.price, nv.tradedAt, open, "Finnhub", it.first, it.second) },
+        )
+        val check = checks.firstOrNull { it.mismatch } ?: checks.firstOrNull { it.diffPct != null && !it.message.contains("생략") } ?: checks.first()
+        val bars = cd?.bars.orEmpty()
+        val last252 = bars.takeLast(252)
+        val warning = when {
+            fr == Freshness.STALE -> "시세가 오래되었습니다 (체결 기준 ${MarketClock.formatKst(nv.tradedAt)}). 새로고침 후 다시 확인하세요."
+            check.mismatch -> check.message
+            nv.ext != null && !open && (nv.ext.changePct?.let { kotlin.math.abs(it) } ?: 0.0) >= 2.0 ->
+                "${nv.ext.label} 가격이 정규장 종가 대비 ${com.aistock.pro.analysis.Fmt.pct(nv.ext.changePct)} 차이 — 분석·매매가는 정규장 종가 기준입니다."
+            else -> null
+        }
+        val name = if (ref.name.isBlank() || ref.name == ref.symbol) (nv.name ?: cd?.meta?.longName ?: ref.name) else ref.name
+        return Quote(
+            ref = ref.copy(name = name, exchange = ref.exchange.ifBlank { cd?.meta?.exchange.orEmpty() }),
+            currency = nv.currency, price = nv.price, prevClose = nv.prevClose, change = nv.change, changePct = nv.changePct,
+            volume = nv.volume, dayHigh = nv.high, dayLow = nv.low,
+            high52 = cd?.meta?.high52 ?: last252.maxOfOrNull { it.h },
+            low52 = cd?.meta?.low52 ?: last252.minOfOrNull { it.l },
+            marketCap = null, marketCapSource = null,
+            marketTime = nv.tradedAt, timezone = nv.zone, marketOpen = open,
+            statusText = QuoteLogic.statusText(fr, session, open, (nowSec - nv.tradedAt) / 60),
+            session = session, freshness = fr, source = NaverSource.NAME,
+            delayText = QuoteLogic.delayText(NaverSource.NAME, nv.delayMin, kr),
+            ext = nv.ext, check = check, fetchedAt = System.currentTimeMillis(), warning = warning,
+        )
+    }
+
+    /** 시세 스냅샷과 같은 기준으로 정렬된 일봉 (분석용) */
+    suspend fun alignedDaily(q: Quote, maxAgeMs: Long = 120_000L): List<Bar> {
+        val cd = chart(q.ref.symbol, Interval.D1, maxAgeMs)
+        val zone = runCatching { ZoneId.of(q.timezone) }.getOrDefault(ZoneId.of("UTC"))
+        return QuoteLogic.alignDaily(cd.bars, q.price, q.marketTime, zone, null, q.dayHigh, q.dayLow, q.volume)
     }
 
     private fun capSourceName(ref: StockRef) = if (ref.market == Market.KR) "공공데이터포털(전 거래일 기준)" else "Finnhub"
@@ -172,14 +277,14 @@ class Repository(private val prefs: Prefs) {
         val newsDef = async { runCatching { news(ref) } }
         val evDef = async { events(ref) }
         val quote = q.await()
-        val cd = chart(quote.ref.symbol, Interval.D1)
+        val bars = alignedDaily(quote)
         val newsRes = newsDef.await()
         val ev = evDef.await()
-        val result = AnalysisEngine.analyze(AnalysisInput(cd.bars, quote.price, quote.ref.market == Market.KR, newsRes.getOrNull(), ev))
+        val result = AnalysisEngine.analyze(AnalysisInput(bars, quote.price, quote.ref.market == Market.KR, newsRes.getOrNull(), ev))
         FullAnalysis(quote, result, newsRes.getOrNull(), ev, newsRes.exceptionOrNull()?.let { Http.friendly(it) })
     }
 
-    data class BestResult(val picks: List<Recommendation>, val analyzed: Int, val failed: List<String>, val excluded: Int, val at: Long)
+    data class BestResult(val picks: List<Recommendation>, val analyzed: Int, val failed: List<String>, val excluded: Int, val at: Long, val staleExcluded: Int = 0)
 
     /** BEST 5: 후보군 전체를 실제 일봉으로 분석 → 기술 점수 상위 10개는 뉴스까지 반영해 재분석 → 상위 5개 */
     suspend fun best5(market: Market, onProgress: (Int, Int) -> Unit): BestResult = coroutineScope {
@@ -189,6 +294,7 @@ class Repository(private val prefs: Prefs) {
         val sem = Semaphore(3)
         val done = AtomicInteger(0)
         val failed = java.util.Collections.synchronizedList(ArrayList<String>())
+        val stale = AtomicInteger(0)
         val first = symbols.map { sym ->
             async {
                 sem.withPermit {
@@ -196,10 +302,11 @@ class Repository(private val prefs: Prefs) {
                         val ref = StockDirectory.bySymbol(sym)?.toRef()
                             ?: prefs.loadWatchlist().firstOrNull { it.symbol == sym }?.let { StockRef(it.symbol, it.name, it.name) }
                             ?: StockRef(sym, sym)
-                        val cd = chart(sym, Interval.D1, maxAgeMs = 600_000L)
-                        val q = buildQuote(ref, cd)
-                        val r = AnalysisEngine.analyze(AnalysisInput(cd.bars, q.price, market == Market.KR, null, Events.upcomingMacro()))
-                        Triple(q, r, cd)
+                        val q = quote(ref, withCap = false)
+                        if (q.unreliable) { stale.incrementAndGet(); return@withPermit null }
+                        val bars = alignedDaily(q, 600_000L)
+                        val r = AnalysisEngine.analyze(AnalysisInput(bars, q.price, market == Market.KR, null, Events.upcomingMacro()))
+                        Triple(q, r, bars)
                     } catch (e: Exception) {
                         failed.add(StockDirectory.koreanNameFor(sym) ?: sym); null
                     } finally {
@@ -213,18 +320,19 @@ class Repository(private val prefs: Prefs) {
         val preliminary = first.mapNotNull { (q, r, _) -> Recommender.score(q.ref, r, q.marketTime)?.let { Triple(q, it, r) } }
             .sortedByDescending { it.second.total }.take(10)
         // 상위 후보는 뉴스 반영 재분석
+        val barsBy = first.associate { (q, _, b) -> q.ref.symbol to b }
         val finalList = preliminary.map { (q, _, _) ->
             async {
                 sem.withPermit {
-                    val cd = chart(q.ref.symbol, Interval.D1, maxAgeMs = 600_000L)
+                    val bars = barsBy[q.ref.symbol] ?: alignedDaily(q, 600_000L)
                     val n = runCatching { news(q.ref) }.getOrNull()
-                    val r = AnalysisEngine.analyze(AnalysisInput(cd.bars, q.price, market == Market.KR, n, events(q.ref)))
+                    val r = AnalysisEngine.analyze(AnalysisInput(bars, q.price, market == Market.KR, n, events(q.ref)))
                     Recommender.score(q.ref, r, q.marketTime)
                 }
             }
         }.mapNotNull { it.await() }
         val excluded = first.size - first.count { (q, r, _) -> Recommender.score(q.ref, r, q.marketTime) != null }
-        BestResult(Recommender.rank(finalList), first.size, failed.toList(), excluded, System.currentTimeMillis() / 1000)
+        BestResult(Recommender.rank(finalList), first.size, failed.toList(), excluded, System.currentTimeMillis() / 1000, stale.get())
     }
 
     /** 원/달러 환율 */

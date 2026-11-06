@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,13 @@ private fun String.num(): Double? = replace(",", "").trim().toDoubleOrNull()
 fun WatchlistScreen(vm: MainViewModel) {
     var sub by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { vm.refreshWatch(); vm.reloadAlerts() }
+    // 화면이 보이는 동안 30초마다 시세 자동 갱신 (무료 공급원 호출 제한 고려)
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    LaunchedEffect(Unit) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) { kotlinx.coroutines.delay(30_000L); vm.refreshWatch() }
+        }
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         AppHeader("관심 종목 · 보유 주식 · 알림") {
             IconButton(onClick = { vm.refreshWatch(); vm.reloadAlerts() }) { Icon(Icons.Filled.Refresh, "새로고침", tint = AppColors.Sub) }
@@ -125,7 +133,12 @@ private fun WatchCard(vm: MainViewModel, w: WatchItem) {
                 Spacer(Modifier.width(8.dp))
                 Text(Fmt.pct(q.changePct), color = changeColor(q.changePct), fontSize = 14.sp, modifier = Modifier.padding(bottom = 3.dp))
             }
-            Text("기준 ${MarketClock.format(q.marketTime, w.market)}", color = AppColors.Sub, fontSize = 11.sp)
+            Text("기준 ${MarketClock.format(q.marketTime, w.market)} · ${q.source} · 갱신 ${MarketClock.relative(q.fetchedAt / 1000)}", color = AppColors.Sub, fontSize = 11.sp)
+            q.ext?.let { e ->
+                Text("${e.label}${if (e.active) "(진행 중)" else "(종료)"} ${Fmt.price(e.price, kr)} ${Fmt.pct(e.changePct)}",
+                    color = changeColor(e.changePct), fontSize = 12.sp)
+            }
+            q.warning?.let { Text("⚠ $it", color = AppColors.Orange, fontSize = 11.sp, lineHeight = 15.sp) }
         } else {
             val err = vm.watchErrors[w.symbol]
             Text(err ?: if (vm.watchLoading) "시세 불러오는 중…" else "시세 없음", color = if (err != null) AppColors.Orange else AppColors.Sub, fontSize = 13.sp)
@@ -138,6 +151,12 @@ private fun WatchCard(vm: MainViewModel, w: WatchItem) {
                 val eval = q.price * w.qty; val cost = w.avgPrice * w.qty; val pl = eval - cost
                 KeyValue("평가금액", Fmt.price(eval, kr))
                 KeyValue("평가손익", "${Fmt.price(pl, kr)} (${Fmt.pct(pl / cost * 100)})", changeColor(pl))
+                q.ext?.let { e ->
+                    val pl2 = e.price * w.qty - cost
+                    KeyValue("${e.label} 기준", "${Fmt.price(pl2, kr)} (${Fmt.pct(pl2 / cost * 100)}) · 참고용", changeColor(pl2))
+                }
+                Text("평가 기준: ${q.statusText} 가격 (${MarketClock.format(q.marketTime, w.market)})" +
+                    if (q.unreliable) " · ⚠ 시세 신뢰도 낮음" else "", color = if (q.unreliable) AppColors.Orange else AppColors.Sub, fontSize = 11.sp)
                 if (!kr) vm.fx?.let { fx -> KeyValue("원화 환산 손익", "${Fmt.won(pl * fx)} (현재 환율 ${Fmt.won(fx)})", changeColor(pl)) }
             }
         }

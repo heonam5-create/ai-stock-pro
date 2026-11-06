@@ -26,6 +26,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,11 +38,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import com.aistock.pro.analysis.AnalysisResult
 import com.aistock.pro.analysis.Fmt
 import com.aistock.pro.analysis.PriceLevel
 import com.aistock.pro.analysis.Strategy
 import com.aistock.pro.data.AlertType
+import com.aistock.pro.data.Freshness
 import com.aistock.pro.data.Interval
 import com.aistock.pro.data.Market
 import com.aistock.pro.data.MarketClock
@@ -102,12 +107,26 @@ fun AnalysisScreen(vm: MainViewModel) {
 private fun AnalysisBody(vm: MainViewModel, ref: StockRef) {
         val kr = ref.market == Market.KR
 
+        // ── 시세 자동 새로고침 (화면이 보일 때만, 공급원 제한을 고려한 주기) ──
+        val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+        LaunchedEffect(ref.symbol) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    delay(vm.nextRefreshMs())
+                    vm.silentRefreshQuote()
+                }
+            }
+        }
+
         // ── 시세 ──
-        SectionCard("현재가") {
+        SectionCard("현재가", action = {
+            if (vm.refreshing) Text("갱신 중…", color = AppColors.Sub, fontSize = 12.sp)
+            IconButton(onClick = { vm.refreshQuote() }) { Icon(Icons.Filled.Refresh, "시세 새로고침", tint = AppColors.Accent) }
+        }) {
             when (val st = vm.quoteState) {
                 is UiState.Idle, is UiState.Loading -> LoadingBox("시세 불러오는 중…")
                 is UiState.Error -> ErrorBox(st.message) { vm.refreshQuote() }
-                is UiState.Success -> QuoteBlock(st.data)
+                is UiState.Success -> QuoteBlock(st.data, vm.nextRefreshMs())
             }
         }
 
@@ -166,9 +185,17 @@ private fun AnalysisBody(vm: MainViewModel, ref: StockRef) {
             is UiState.Error -> ErrorBox(st.message) { vm.runAnalysis() }
             is UiState.Success -> {
                 val fa = st.data
+                PriceGuard(vm, fa.quote)
                 VerdictCard(fa.result, fa.quote)
                 FactorsCard(fa.result)
-                fa.result.strategy?.let { StrategyCard(it, fa.result, kr) }
+                if (fa.quote.unreliable) {
+                    SectionCard("매수·매도 전략") {
+                        Text("⚠ 시세 신뢰도가 낮아(지연·오류·공급원 불일치) 매수가·목표가·손절가를 표시하지 않습니다. 시세를 새로고침한 뒤 다시 분석하세요.",
+                            color = AppColors.Orange, fontSize = 13.sp, lineHeight = 18.sp)
+                        Spacer(Modifier.height(6.dp))
+                        PrimaryButton("다시 분석") { vm.runAnalysis() }
+                    }
+                } else fa.result.strategy?.let { StrategyCard(it, fa.result, kr) }
                 LevelsCard(fa.result, kr)
                 AlertShortcuts(vm, fa.result, fa.quote)
                 ExternalAiCard(vm)
@@ -187,19 +214,47 @@ private fun AnalysisBody(vm: MainViewModel, ref: StockRef) {
         Spacer(Modifier.height(12.dp))
 }
 
+private fun freshColor(q: Quote): Color = when (q.freshness) {
+    Freshness.REALTIME -> AppColors.Green
+    Freshness.DELAYED -> AppColors.Accent
+    Freshness.CLOSED -> AppColors.Sub
+    Freshness.STALE, Freshness.ERROR -> AppColors.Orange
+}
+
 @Composable
-private fun QuoteBlock(q: Quote) {
+private fun QuoteBlock(q: Quote, nextMs: Long) {
     val kr = q.ref.market == Market.KR
+    q.warning?.let {
+        Text("⚠ $it", color = AppColors.Orange, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 6.dp))
+    }
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(Fmt.price(q.price, kr), color = changeColor(q.changePct), fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text(Fmt.price(q.price, kr), color = if (q.unreliable) AppColors.Sub else changeColor(q.changePct), fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(10.dp))
         Text("${q.change?.let { (if (it > 0) "▲" else if (it < 0) "▼" else "") + Fmt.num(kotlin.math.abs(it), kr) } ?: "-"}  ${Fmt.pct(q.changePct)}",
             color = changeColor(q.changePct), fontSize = 15.sp, modifier = Modifier.padding(bottom = 4.dp))
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Badge(q.statusText, if (q.statusText.contains("⚠")) AppColors.Orange else if (q.marketOpen) AppColors.Green else AppColors.Sub)
+    ChipRow {
+        Badge(q.freshness.label, freshColor(q))
+        Spacer(Modifier.width(6.dp))
+        Badge(q.session.label, if (q.marketOpen) AppColors.Green else AppColors.Sub)
+        Spacer(Modifier.width(6.dp))
+        Badge(q.source, AppColors.Accent)
     }
     Spacer(Modifier.height(6.dp))
+    q.ext?.let { e ->
+        val st = if (e.active) "진행 중" else "종료"
+        KeyValue("${e.label} ($st)", "${Fmt.price(e.price, kr)}  ${Fmt.pct(e.changePct)}\n${MarketClock.format(e.time, q.ref.market)}",
+            changeColor(e.changePct))
+    }
+    if (!kr) {
+        Text("※ 국내 증권사 '주간거래'(미국 야간 대체거래소) 가격은 무료 공급원이 제공하지 않아 표시하지 않습니다. 증권사 앱 가격과 다를 수 있습니다.",
+            color = AppColors.Sub, fontSize = 11.sp, lineHeight = 15.sp)
+    }
+    KeyValue("체결 기준 시각", MarketClock.format(q.marketTime, q.ref.market))
+    KeyValue("마지막 갱신", "${MarketClock.formatKst(q.fetchedAt / 1000)} (${MarketClock.relative(q.fetchedAt / 1000)}) · 자동 ${nextMs / 1000}초")
+    KeyValue("데이터 제공", q.delayText)
+    q.check?.let { KeyValue("교차 검증", it.message, if (it.mismatch) AppColors.Orange else AppColors.Text) }
     KeyValue("종목명", q.ref.displayName + if (q.ref.nameKr != null && q.ref.name != q.ref.nameKr) " (${q.ref.name})" else "")
     KeyValue("티커 · 거래소", "${q.ref.symbol} · ${q.ref.exchange.ifBlank { "-" }}")
     KeyValue("거래량", Fmt.volume(q.volume, kr))
@@ -207,8 +262,24 @@ private fun QuoteBlock(q: Quote) {
     KeyValue("당일 고가 / 저가", "${Fmt.price(q.dayHigh, kr)} / ${Fmt.price(q.dayLow, kr)}")
     KeyValue("52주 최고 / 최저", "${Fmt.price(q.high52, kr)} / ${Fmt.price(q.low52, kr)}")
     KeyValue("전일 종가", Fmt.price(q.prevClose, kr))
-    KeyValue("데이터 기준 시각", MarketClock.format(q.marketTime, q.ref.market))
-    Text("공휴일은 장 운영 판단에 반영되지 않습니다. 시세 출처: Yahoo Finance (무료·지연)", color = AppColors.Sub, fontSize = 11.sp)
+    Text("공휴일은 장 운영 판단에 반영되지 않습니다. '실시간'은 공급원이 지연 0분으로 표기하고 체결 시각이 최신일 때만 표시합니다.",
+        color = AppColors.Sub, fontSize = 11.sp, lineHeight = 15.sp)
+}
+
+/** 분석에 사용한 시세가 오래되었거나 현재 시세와 다르면 경고 */
+@Composable
+private fun PriceGuard(vm: MainViewModel, q: Quote) {
+    val drift = vm.analysisDrift()
+    val msg = when {
+        q.unreliable -> "분석 당시 시세가 신뢰할 수 없는 상태였습니다 (${q.statusText}). 매수·매도 판단에 사용하지 마세요."
+        drift != null -> drift
+        else -> null
+    } ?: return
+    SectionCard("⚠ 시세 확인 필요") {
+        Text(msg, color = AppColors.Orange, fontSize = 13.sp, lineHeight = 18.sp)
+        Spacer(Modifier.height(6.dp))
+        PrimaryButton("최신 시세로 다시 분석") { vm.runAnalysis() }
+    }
 }
 
 @Composable
@@ -238,7 +309,7 @@ private fun VerdictCard(r: AnalysisResult, q: Quote) {
             r.risks.forEach { Text("• $it", color = AppColors.Text, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(vertical = 2.dp)) }
         }
         r.warnings.forEach { Text("⚠ $it", color = AppColors.Orange, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
-        Text("분석 기준: 일봉 · 현재가 ${Fmt.price(q.price, q.ref.market == Market.KR)} · ${MarketClock.format(q.marketTime, q.ref.market)}",
+        Text("분석 기준: 일봉 · 정규장 가격 ${Fmt.price(q.price, q.ref.market == Market.KR)} · ${q.statusText} · ${q.source} · ${MarketClock.format(q.marketTime, q.ref.market)}",
             color = AppColors.Sub, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
     }
 }
