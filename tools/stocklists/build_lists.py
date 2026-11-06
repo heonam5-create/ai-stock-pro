@@ -119,7 +119,15 @@ def main(outdirs):
                 continue
             seen.add(ticker)
             yahoo = ticker.replace(".", "-")         # Yahoo: BRK-B
-            us.append([ticker, s.get("stockName") or "", s.get("stockNameEng") or off[ticker][0], ex, ncode, yahoo, len(us) + 1])
+            try:
+                mv = float(s.get("marketValueRaw") or 0)
+            except ValueError:
+                mv = 0.0
+            us.append([ticker, s.get("stockName") or "", s.get("stockNameEng") or off[ticker][0], ex, ncode, yahoo, mv])
+    # 시가총액 전체 순위 (거래소 구분 없이)
+    us.sort(key=lambda x: -x[6])
+    for i, x in enumerate(us):
+        x[6] = i + 1
     # 네이버 목록에 없는 공식 종목도 검색은 가능하게 (시세는 Yahoo 대체)
     for t, (name, ex, etf) in off.items():
         if t in seen or ex not in ("NASDAQ", "NYSE", "AMEX", "NYSE ARCA"):
