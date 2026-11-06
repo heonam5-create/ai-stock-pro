@@ -29,6 +29,9 @@ jobs:
 
       - name: Android SDK 설치
         uses: android-actions/setup-android@v3
+        with:
+          # 기본값('tools')은 더 이상 존재하지 않는 패키지라 실패하므로 명시
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v4
