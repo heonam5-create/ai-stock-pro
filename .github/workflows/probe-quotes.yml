@@ -1,0 +1,14 @@
+name: 시세 공급원 점검
+on:
+  push:
+    branches: [ 'claude/**' ]
+    paths: [ 'tools/probe/**', '.github/workflows/probe-quotes.yml' ]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/probe/probe.sh
