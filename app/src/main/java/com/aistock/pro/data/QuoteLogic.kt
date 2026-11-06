@@ -98,6 +98,10 @@ object QuoteLogic {
         }
     }
 
+    /** 정규장 진행 여부 = 공급원 상태 OPEN 이면서 정규장 시간표(한국 09:00~15:30, 미국 09:30~16:00 현지) 안 */
+    fun regularOpen(naverStatusOpen: Boolean, market: Market, nowMillis: Long): Boolean =
+        naverStatusOpen && MarketClock.isOpen(market, nowMillis)
+
     /** 자동 새로고침 주기(ms): 장중/시간외 진행 중이면 짧게, 마감이면 길게. 공급원 권장 주기보다 짧게 하지 않음 */
     fun refreshMs(q: Quote): Long {
         val live = q.marketOpen || q.ext?.active == true

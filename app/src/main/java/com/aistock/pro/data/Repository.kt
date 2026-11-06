@@ -166,7 +166,8 @@ class Repository(private val prefs: Prefs) {
     private fun fromNaver(ref: StockRef, nv: NaverSource.Snap, cd: ChartData?, fh: Pair<Double, Long>?): Quote {
         val nowSec = System.currentTimeMillis() / 1000
         val kr = ref.market == Market.KR
-        val open = nv.open_
+        // 네이버는 NXT·시간외가 열려 있으면 정규장 마감 후에도 OPEN 을 줄 수 있음 → 정규장 시간표와 함께 판단
+        val open = QuoteLogic.regularOpen(nv.open_, ref.market, System.currentTimeMillis())
         val fr = QuoteLogic.freshness(open, nv.tradedAt, nowSec, nv.delayMin, true)
         val session = if (open) Session.REGULAR else Session.CLOSED
         val checks = listOfNotNull(

@@ -92,4 +92,11 @@ class QuoteLogicTest {
         val b = NaverSource.parseDaily(j, ZoneId.of("Asia/Seoul"), java.time.LocalTime.of(9, 0))
         assertEquals(2, b.size); assertEquals(223500.0, b[1].c, 0.0)
     }
+
+    @Test fun nxtAfterMarketIsNotRegularSession() {
+        // 2026-11-06 15:58 KST: 네이버 marketStatus=OPEN(NXT 애프터마켓)이지만 KRX 정규장은 15:30 마감
+        assertFalse(QuoteLogic.regularOpen(true, Market.KR, 1_793_948_280_000L))
+        assertTrue(QuoteLogic.regularOpen(true, Market.KR, 1_793_940_000_000L))    // 13:40 KST
+        assertFalse(QuoteLogic.regularOpen(false, Market.KR, 1_793_940_000_000L))  // 휴장 등
+    }
 }
