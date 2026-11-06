@@ -3,23 +3,29 @@
 set -u
 UA="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
 echo "NOW UTC: $(date -u '+%F %T')  KST: $(TZ=Asia/Seoul date '+%F %T')  NY: $(TZ=America/New_York date '+%F %T')"
-kst() { TZ=Asia/Seoul date -d "@$1" '+%m-%d %H:%M:%S'; }
-for s in SNDK NVDA MU TSLA AAPL 005930.KS 000660.KS 035420.KS 035720.KS; do
-  echo "=== Yahoo chart $s"
-  j=$(curl -sS -A "$UA" "https://query1.finance.yahoo.com/v8/finance/chart/$s?interval=1m&range=1d&includePrePost=true")
-  echo "$j" | jq -c '.chart.result[0].meta | {regularMarketPrice, regularMarketTime, chartPreviousClose, previousClose, hasPrePostMarketData, tz:.exchangeTimezoneName, ctp:.currentTradingPeriod}' 2>&1 | head -c 1500; echo
-  echo "$j" | jq -r '.chart.result[0] | [.timestamp, .indicators.quote[0].close] | transpose | map(select(.[1]!=null)) | .[-3:][] | "\(.[0]) \(.[1])"' 2>/dev/null | while read t c; do echo "  bar $(kst $t) KST close=$c"; done
+for s in SNDK 005930.KS; do
+  for h in query1 query2; do
+    echo "=== Yahoo chart $h $s"
+    curl -sS -A "$UA" -w "\nHTTP %{http_code}\n" "https://$h.finance.yahoo.com/v8/finance/chart/$s?interval=1d&range=5d&includePrePost=true" | head -c 1200; echo
+  done
 done
 echo "=== Yahoo v7 quote (crumb)"
-CJ=$(mktemp); curl -sS -A "$UA" -c $CJ -o /dev/null https://fc.yahoo.com/ ; CR=$(curl -sS -A "$UA" -b $CJ https://query1.finance.yahoo.com/v1/test/getcrumb); echo "crumb len ${#CR}"
-curl -sS -A "$UA" -b $CJ "https://query1.finance.yahoo.com/v7/finance/quote?symbols=SNDK,NVDA,005930.KS&crumb=$CR" | jq -c '.quoteResponse.result[]? | with_entries(select(.key|test("[Mm]arket(Price|Time|State)|^overnight|^post|^pre|regularMarketPreviousClose|quoteSourceName|exchangeDataDelayedBy|symbol")))' 2>&1 | head -c 4000; echo
-echo "=== Naver domestic polling"
-curl -sS -A "$UA" "https://polling.finance.naver.com/api/realtime/domestic/stock/005930" | head -c 1500; echo
-echo "=== Naver m.stock basic 005930"
-curl -sS -A "$UA" "https://m.stock.naver.com/api/stock/005930/basic" | head -c 2000; echo
-for s in SNDK.O NVDA.O AAPL.O TSLA.O MU.O; do
-  echo "=== Naver US basic $s"
-  curl -sS -A "$UA" "https://api.stock.naver.com/stock/$s/basic" | head -c 2500; echo
+CJ=$(mktemp); curl -sS -A "$UA" -c $CJ -o /dev/null https://fc.yahoo.com/ ; CR=$(curl -sS -A "$UA" -b $CJ https://query1.finance.yahoo.com/v1/test/getcrumb); echo "crumb: $(echo "$CR" | head -c 60)"
+curl -sS -G -A "$UA" -b $CJ --data-urlencode "crumb=$CR" "https://query1.finance.yahoo.com/v7/finance/quote?symbols=SNDK,005930.KS" | head -c 2500; echo
+for s in 000660 035420 035720; do
+  echo "=== Naver KR $s"
+  curl -sS -A "$UA" "https://polling.finance.naver.com/api/realtime/domestic/stock/$s" | jq -c '.datas[0] | {stockName,closePrice,marketStatus,localTradedAt,delay:.stockExchangeType.delayTime,over:.overMarketPriceInfo}'
 done
-echo "=== Naver US polling"
-curl -sS -A "$UA" "https://polling.finance.naver.com/api/realtime/worldstock/stock/SNDK.O" | head -c 2500; echo
+for s in JPM KO SPY BRK.B AMD; do for x in O N K A ""; do
+  c="$s${x:+.$x}"
+  r=$(curl -sS -A "$UA" "https://polling.finance.naver.com/api/realtime/worldstock/stock/$c")
+  echo "Naver US $c -> $(echo "$r" | jq -c '.datas[0]? | {reutersCode,closePrice,marketStatus,localTradedAt,ex:.stockExchangeType.code}' 2>/dev/null | head -c 300)"
+done; done
+echo "=== Naver US multi"
+curl -sS -A "$UA" "https://polling.finance.naver.com/api/realtime/worldstock/stock/NVDA.O,AAPL.O" | head -c 300; echo
+echo "=== Naver chart KR day"
+curl -sS -A "$UA" "https://api.stock.naver.com/chart/domestic/item/005930/day?startDateTime=202610200000&endDateTime=202611062359" | head -c 700; echo
+echo "=== Naver chart US day"
+curl -sS -A "$UA" "https://api.stock.naver.com/chart/foreign/item/SNDK.O/day?startDateTime=202610200000&endDateTime=202611062359" | head -c 700; echo
+echo "=== Naver US search-ish"
+curl -sS -A "$UA" "https://api.stock.naver.com/stock/SNDK.O/integration" | head -c 400; echo
